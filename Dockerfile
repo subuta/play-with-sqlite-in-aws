@@ -38,7 +38,12 @@ COPY --from=build /opt/work/dist /opt/work
 WORKDIR /opt/work
 
 # Put runit config for app
-COPY ./Dockerfiles/run-pwsia.sh /service/pwl/run
+COPY ./Dockerfiles/run-pwsia.sh /service/pwsia/run
+COPY ./Dockerfiles/log-pwsia.sh /service/pwsia/log/run
+
+# Create log directory.
+# SEE: [runit-quickstart](https://kchard.github.io/runit-quickstart/)
+RUN mkdir -p /var/log/pwsia
 
 # SEE: [Bypass runsvdir-start in order to preserve env by mattolson · Pull Request #6 · phusion/baseimage-docker](https://github.com/phusion/baseimage-docker/pull/6/files)
 # Start with runit daemon.

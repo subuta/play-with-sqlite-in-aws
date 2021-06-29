@@ -126,7 +126,9 @@ dist
 
 server
 new_server
-data/
+
+data/*
+!data/.keep
 
 # CDK Context & Staging files
 cdk.context.json
