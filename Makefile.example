@@ -13,6 +13,8 @@ build-d:
 deploy-d:
 	docker-compose exec app bash -c "mv ./data/new_server ./server && /opt/work/restart.sh"
 
+update-d: build-d deploy-d
+
 diff:
 	pushd ./infrastructure && cdk diff "*Stack" --profile xxx && popd
 

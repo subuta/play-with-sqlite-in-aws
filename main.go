@@ -4,19 +4,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
+	"github.com/benbjohnson/litestream"
+	reuseport "github.com/kavu/go_reuseport"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/seamless"
+	"github.com/subuta/play-with-sqlite-in-aws/internal/pwsia"
 	"github.com/xo/dburl"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
-
-	reuseport "github.com/kavu/go_reuseport"
 )
 
 var (
@@ -36,67 +35,60 @@ func init() {
 	seamless.Init(*pidFile)
 }
 
-func openDB() *sqlx.DB {
-	fileName := "/opt/work/db/db.sqlite"
-
-	// Touch sqlite file if not exits.
-	_, err := os.Stat(fileName)
-	notExisted := os.IsNotExist(err)
-	if notExisted {
-		file, err := os.Create(fileName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
-	}
-
-	// Connect to SQLite3 with WAL enabled.
-	// SEE: https://github.com/mattn/go-sqlite3#connection-string
-	// SEE: [go-sqlite3 with journal_mode=WAL gives 'database is locked' error - Stack Overflow](https://stackoverflow.com/questions/57118674/go-sqlite3-with-journal-mode-wal-gives-database-is-locked-error)
-	// SEE: [Support vfs for Open by mattn · Pull Request #877 · mattn/go-sqlite3](https://github.com/mattn/go-sqlite3/pull/877)
-	// SEE: https://stackoverflow.com/a/42492845/9998350, at [linux - Why does sqlite3 not work on Amazon Elastic File System? - Stack Overflow](https://stackoverflow.com/questions/42070214/why-does-sqlite3-not-work-on-amazon-elastic-file-system)
-	u, err := dburl.Parse("file:" + fileName + "?cache=shared&mode=rwc&_journal_mode=WAL&vfs=unix")
-	if err != nil {
-		return nil
-	}
-
-	db, err := sqlx.Open(u.Driver, u.DSN)
-	if err != nil {
-		return nil
-	}
-
-	if notExisted {
-		// Run initial migration
-		file, err := ioutil.ReadFile("/opt/work/fixtures/initial_schema.sql")
-		if err != nil {
-			return nil
-		}
-		db.Exec(string(file))
-	}
-
-	// Set busy_timeout for Litestream.
-	// Litestream recommends "busy_timeout = 5000", but for NFS usage we need make timeout value much longer.
-	db.MustExec("PRAGMA busy_timeout = 30000;")
-	db.MustExec("PRAGMA synchronous = NORMAL;\n")
-
-	return db
-}
-
 // SEE: https://github.com/rs/seamless
 func main() {
+	log.Print("[main] started")
+
 	serverName := os.Getenv("SERVER_NAME")
 	if len(serverName) == 0 {
 		serverName = "default"
 	}
 
-	sid, err := uuid.NewUUID()
-	if err != nil {
-		log.Fatal(err)
+	databaseUrl := os.Getenv("DATABASE_URL")
+	if len(databaseUrl) == 0 {
+		log.Print("DATABASE_URL not specified")
+		return
 	}
 
-	// Open SQLite DB.
-	db := openDB()
+	skipLs := os.Getenv("SKIP_LS")
+	shouldSkipLs := skipLs == "1"
+
+	var lsdb *litestream.DB
+	if !shouldSkipLs {
+		var err error
+
+		lsCtx, stopLs := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+		defer stopLs()
+
+		bucket := "pwsia-example-bucket"
+
+		// Create a Litestream DB and attached replica to manage background replication.
+		log.Print(fmt.Sprintf("[main] try start replicating '%s' into S3 '%s' Bucket", databaseUrl, bucket))
+
+		u, err := dburl.Parse(databaseUrl)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		// Extract only File Path.
+		onlyFileName := u.URL.Opaque
+		lsdb, err = pwsia.Replicate(lsCtx, onlyFileName, bucket)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		defer lsdb.SoftClose()
+		log.Print(fmt.Sprintf("[main] replication started"))
+	} else {
+		log.Print("[main] skipped Litestream replication")
+	}
+
+	// Open SQLite DB for App.
+	log.Print(fmt.Sprintf("[main] try opening '%s' database", databaseUrl))
+	db := pwsia.OpenDB(databaseUrl)
 	defer db.Close()
+	log.Print(fmt.Sprintf("[main] opened '%s' database successfully", databaseUrl))
 
 	// Use github.com/kavu/go_reuseport waiting for
 	// https://github.com/golang/go/issues/9661 to be fixed.
@@ -110,52 +102,25 @@ func main() {
 		log.Fatal(err)
 	}
 
-	r := chi.NewRouter()
-	//r.Use(middleware.Logger)
-
-	// Heartbeat routes.
-	r.Get("/hb", func(w http.ResponseWriter, r *http.Request) {
-		if d := r.URL.Query().Get("delay"); d != "" {
-			if delay, err := time.ParseDuration(d); err == nil {
-				time.Sleep(delay)
-			}
-		}
-
-		db.MustExec("SELECT 1 + 1")
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("%s: 💓, instanceUUID = %v\n", serverName, sid)))
-	})
-
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		insertPv := `INSERT INTO page_views DEFAULT VALUES`
-		db.MustExec(insertPv)
-
-		d1 := time.Since(start)
-		start = time.Now()
-
-		var count int
-		db.Get(&count, "SELECT count(*) from page_views;")
-
-		d2 := time.Since(start)
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("Hello, World 👋!, serverName = %s, pv = %d, d1(time taken for INSERT) = %v, d2(time taken for SELECT) = %v", serverName, count, d1, d2)))
-	})
-
 	s := &http.Server{
-		Addr: *listen,
-		Handler: r,
+		Addr:    *listen,
+		Handler: pwsia.GetRouter(db),
 	}
 
-	seamless.OnShutdownRequest(func () {
-		log.Print("Got Graceful shutdown request.")
+	seamless.OnShutdownRequest(func() {
+		log.Print("[main] Got Graceful shutdown request")
 
-		if delay, err := time.ParseDuration("3s"); err == nil {
-			time.Sleep(delay)
+		// Do nothing if Litestream are totally "skipped".
+		if shouldSkipLs {
+			return
 		}
+
+		log.Print("[main] Try closing Litestream replication")
+		if err := lsdb.SoftClose(); err != nil {
+			log.Fatal(err)
+			return
+		}
+		log.Print("[main] Done closing Litestream replication successfully")
 	})
 
 	// Implement the graceful shutdown that will be triggered once the new process
@@ -176,6 +141,7 @@ func main() {
 	go func() {
 		// Give the server a second to start
 		time.Sleep(time.Second)
+
 		if err == nil {
 			// Signal seamless that the daemon is started and the socket is
 			// bound successfully. If a pid file is found, seamless will send
@@ -186,12 +152,13 @@ func main() {
 		}
 	}()
 
+	log.Print(fmt.Sprintf("[main] start HTTP server on '%v'", &listen))
 	err = s.Serve(l)
 	if err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 
-	log.Print("Waiting for OnShutdown")
+	log.Print("[main] Waiting for OnShutdown")
 
 	// Once graceful shutdown is initiated, the Serve method is return with a
 	// http.ErrServerClosed error. We must not exit until the graceful shutdown
@@ -199,5 +166,5 @@ func main() {
 	// has returned.
 	seamless.Wait()
 
-	log.Print("Done OnShutdown, Finishing server process.")
+	log.Print("[main] Done OnShutdown, Finishing server process.")
 }

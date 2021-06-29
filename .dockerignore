@@ -4,6 +4,8 @@
 
 fixtures/
 
+db/
+
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

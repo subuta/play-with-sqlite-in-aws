@@ -5,4 +5,6 @@
 
 # Run server binary.
 exec 2>&1
-exec /opt/work/server
+
+cd /opt/work
+exec ./server

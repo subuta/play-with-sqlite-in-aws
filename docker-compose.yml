@@ -16,8 +16,12 @@ services:
       context: .
       dockerfile: Dockerfile
     image: "play-with-sqlite-in-aws_app_prod:${APP_IMAGE_TAG}"
+    env_file:
+      - .env
     environment:
-      SERVER_NAME: app
+      - SERVER_NAME=app
+      - S3_ENDPOINT=http://s3:9000
+      - INITIAL_DB_SCHEMA_PATH=/opt/work/fixtures/initial_schema.sql
     ports:
       - "3000:3000"
     volumes:
@@ -28,9 +32,13 @@ services:
   # Second app (For testing multiple connection into DB)
   app2:
     image: "play-with-sqlite-in-aws_app_prod:${APP_IMAGE_TAG}"
+    env_file:
+      - .env
     environment:
-      SERVER_NAME: app2
-      SKIP_LS: 1
+      - SERVER_NAME=app2
+      - SKIP_LS=1
+      - S3_ENDPOINT=http://s3:9000
+      - INITIAL_DB_SCHEMA_PATH=/opt/work/fixtures/initial_schema.sql
     entrypoint: bash
     command: /opt/work/wait-for-it.sh app:3000 -- /command/runsvdir -P /service
     ports:
