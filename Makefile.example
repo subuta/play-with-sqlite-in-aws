@@ -7,10 +7,11 @@ endif
 build:
 	go build -o server
 
-# SEE: [boot2docker - Docker - how can I copy a file from an image to a host? - Stack Overflow](https://stackoverflow.com/a/59055906/9998350)
 build-d:
-	docker-compose build app
-	docker cp $$(docker create --rm play-with-litestream_app_prod:${APP_IMAGE_TAG}):/etc/service/pwl/server ./new_server
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CC=/usr/local/bin/x86_64-linux-musl-cc go build --ldflags='-linkmode external -extldflags "-static" -w -s' -o ./data/new_server .
+
+deploy-d:
+	docker-compose exec app bash -c "mv ./data/new_server ./server && /opt/work/restart.sh"
 
 diff:
 	pushd ./infrastructure && cdk diff "*Stack" --profile xxx && popd

@@ -19,18 +19,27 @@ RUN cp -r /opt/work/fixtures /opt/work/dist/fixtures && \
 FROM amazonlinux:2
 
 # Fix Cerificate error for S3.
-RUN yum update -y && yum install -y wget procps systemd-sysv ca-certificates
+RUN yum update -y && yum group install -y "Development Tools" && yum install -y tar wget procps glibc-static ca-certificates
+
+# Install daemontools
+RUN mkdir -p /package && \
+    chmod 1755 /package && \
+    cd /package && \
+    wget http://smarden.org/runit/runit-2.1.2.tar.gz && \
+    gunzip runit-2.1.2.tar.gz && \
+    tar -xpf runit-2.1.2.tar && \
+    cd admin/runit-2.1.2 && \
+    ./package/install && \
+    mkdir -p /service
 
 # Copy our static executable.
 COPY --from=build /opt/work/dist /opt/work
 
 WORKDIR /opt/work
 
-# Put systemd(systemctl) config for app
-COPY ./Dockerfiles/pwsia.service /etc/systemd/system/pwsia.service
+# Put runit config for app
+COPY ./Dockerfiles/run-pwsia.sh /service/pwl/run
 
-# Enable app for systemd.
-RUN systemctl enable pwsia
-
-# Start systemd.
-CMD ["/sbin/init"]
+# SEE: [Bypass runsvdir-start in order to preserve env by mattolson · Pull Request #6 · phusion/baseimage-docker](https://github.com/phusion/baseimage-docker/pull/6/files)
+# Start with runit daemon.
+CMD ["/command/runsvdir", "-P", "/service"]
