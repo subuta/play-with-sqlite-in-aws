@@ -1,0 +1,46 @@
+version: '3'
+services:
+  # Minio
+  s3:
+    image: minio/minio:RELEASE.2021-04-06T23-11-00Z
+    command: "server /data"
+    environment:
+      - MINIO_ROOT_USER=DUMMY_ROOT_USER
+      - MINIO_ROOT_PASSWORD=DUMMY_ROOT_PASSWORD
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data/s3:/data
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "play-with-sqlite-in-aws_app_prod:${APP_IMAGE_TAG}"
+    environment:
+      SERVER_NAME: app
+    ports:
+      - "3000:3000"
+    # For systemd to work properly.
+    privileged: true
+    volumes:
+      - ./data:/opt/work/data
+      - ./db:/opt/work/db
+    links:
+      - s3
+  # Second app (For testing multiple connection into DB)
+#  app2:
+#    image: "play-with-sqlite-in-aws_app_prod:${APP_IMAGE_TAG}"
+#    environment:
+#      SERVER_NAME: app2
+#      SKIP_LS: 1
+#    entrypoint: bash
+#    command: /opt/work/wait-for-it.sh app:3000 -- /sbin/init
+#    ports:
+#      - "3001:3000"
+#    # For systemd to work properly.
+#    privileged: true
+#    volumes:
+#      - ./data:/opt/work/data
+#      - ./db:/opt/work/db
+#    links:
+#      - s3

@@ -1,0 +1,29 @@
+# SEE: https://lithic.tech/blog/2020-05/makefile-dot-env
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
+build:
+	go build -o server
+
+# SEE: [boot2docker - Docker - how can I copy a file from an image to a host? - Stack Overflow](https://stackoverflow.com/a/59055906/9998350)
+build-d:
+	docker-compose build app
+	docker cp $$(docker create --rm play-with-litestream_app_prod:${APP_IMAGE_TAG}):/etc/service/pwl/server ./new_server
+
+diff:
+	pushd ./infrastructure && cdk diff "*Stack" --profile xxx && popd
+
+deploy:
+	pushd ./infrastructure && cdk deploy "*Stack" --profile xxx && popd
+
+synth:
+	pushd ./infrastructure && cdk synth "*Stack" --profile xxx && popd
+
+destroy:
+	pushd ./infrastructure && cdk destroy "*Stack" --profile xxx && popd
+
+ecr-push:
+  docker-compose build
+	./infrastructure/bin/ecr-deploy.sh --profile xxx -e prod -t "${APP_IMAGE_TAG}" -i play-with-litestream_app

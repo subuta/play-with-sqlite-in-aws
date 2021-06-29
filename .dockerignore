@@ -1,0 +1,21 @@
+# ignore .git and .cache folders
+.git
+.cache
+
+fixtures/
+
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.db.sqlite-litestream
+
+!fixtures/initial_schema.sql
+data/
+infrastructure/
+
+*.md
+
+Dockerfile
+docker-compose.yml
+server
+new_server
