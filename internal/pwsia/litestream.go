@@ -7,7 +7,6 @@ import (
 	lss3 "github.com/benbjohnson/litestream/s3"
 	"log"
 	"os"
-	"strings"
 )
 
 // SEE: https://github.com/benbjohnson/litestream-library-example/blob/main/main.go
@@ -26,7 +25,6 @@ func Replicate(ctx context.Context, dsn string, bucket string) (*litestream.DB, 
 
 	// Set bucket and path.
 	client.Bucket = bucket
-	client.Path = strings.TrimPrefix(dsn, ".")
 
 	// Set other s3 params if local(Minio).
 	isLocal := os.Getenv("IS_LOCAL")

@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"github.com/benbjohnson/litestream"
+	// Load dotenv
+	_ "github.com/joho/godotenv/autoload"
 	reuseport "github.com/kavu/go_reuseport"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/seamless"
@@ -79,6 +81,13 @@ func main() {
 			return
 		}
 		defer lsdb.SoftClose()
+
+		// Sync litestream with current state.
+		if err = lsdb.Sync(context.Background()); err != nil {
+			log.Fatal(err)
+			return
+		}
+
 		log.Print(fmt.Sprintf("[main] replication started"))
 	} else {
 		log.Print("[main] skipped Litestream replication")

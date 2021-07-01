@@ -7,6 +7,11 @@ Try deploy SQLite based WebApp to AWS env
   - brew install FiloSottile/musl-cross/musl-cross
 - macOS (Not tested with other OS)
 
+These tools needs to be installed when you run `make deploy-s` on your local machine
+
+- aws-cli (Tested on aws-cli/2.2.15, At least cli version accepts `aws ssm wait` command)
+- jq
+
 ## How to develop (with Docker)
 
 ```bash

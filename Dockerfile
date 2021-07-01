@@ -10,9 +10,9 @@ RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /opt/work/dist/server .
 
 #
 RUN cp -r /opt/work/fixtures /opt/work/dist/fixtures && \
-    cp /opt/work/Dockerfiles/wait-for-it.sh /opt/work/dist && \
-    cp /opt/work/Dockerfiles/restart.sh /opt/work/dist && \
-    cp /opt/work/Dockerfiles/logs.sh /opt/work/dist && \
+    cp /opt/work/bin/wait-for-it.sh /opt/work/dist && \
+    cp /opt/work/bin/restart.sh /opt/work/dist && \
+    cp /opt/work/bin/logs.sh /opt/work/dist && \
     mkdir /opt/work/dist/db
 
 # For emulating EC2 instance.
@@ -38,8 +38,8 @@ COPY --from=build /opt/work/dist /opt/work
 WORKDIR /opt/work
 
 # Put runit config for app
-COPY ./Dockerfiles/run-pwsia.sh /service/pwsia/run
-COPY ./Dockerfiles/log-pwsia.sh /service/pwsia/log/run
+COPY ./bin/run-pwsia.sh /service/pwsia/run
+COPY ./bin/log-pwsia.sh /service/pwsia/log/run
 
 # Create log directory.
 # SEE: [runit-quickstart](https://kchard.github.io/runit-quickstart/)
