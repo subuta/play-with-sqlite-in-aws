@@ -8,6 +8,7 @@ import * as elbv2 from '@aws-cdk/aws-elasticloadbalancingv2'
 
 import * as path from 'path'
 import { source } from 'common-tags'
+import { HealthCheck } from '@aws-cdk/aws-autoscaling/lib/auto-scaling-group'
 
 type VpcStackProps = cdk.StackProps | {}
 
@@ -40,6 +41,7 @@ export class VpcStack extends cdk.Stack {
     const bucket = new s3.Bucket(this, 'PWSIAExampleBucket', {
       bucketName: 'pwsia-example-bucket',
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
       cors: [
         {
           // Create common bucket for our service.
@@ -72,7 +74,12 @@ export class VpcStack extends cdk.Stack {
     })
 
     // Do install necessary packages.
-    setupCommands.addCommands('sudo yum install -y aws-cfn-bootstrap', 'sudo yum group install -y "Development Tools"')
+    setupCommands.addCommands(
+      'sudo yum install -y aws-cfn-bootstrap',
+      'sudo yum group install -y "Development Tools"',
+      // Log current date to log.
+      "sudo test -f /opt/work/server && echo \"'UserData' called from 'warmed' instance.\""
+    )
 
     const multipartUserData = new ec2.MultipartUserData()
     // Set as default user data.
@@ -186,7 +193,6 @@ export class VpcStack extends cdk.Stack {
       machineImage: new ec2.AmazonLinuxImage({
         generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
       }),
-      autoScalingGroupName: 'pwsia-example-asg',
       desiredCapacity,
       minCapacity: desiredCapacity,
       groupMetrics: [awsasg.GroupMetrics.all()],
@@ -194,13 +200,37 @@ export class VpcStack extends cdk.Stack {
       signals: awsasg.Signals.waitForMinCapacity({
         timeout: cdk.Duration.minutes(10),
       }),
+      healthCheck: HealthCheck.elb({ grace: cdk.Duration.seconds(0) }),
+      // Minimize cool-down latency for better HA behavior.
+      // SEE: [Scaling cooldowns for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/Cooldown.html)
+      cooldown: cdk.Duration.seconds(60),
     })
 
-    // Try sending cfn-signal after setup.
+    // TODO: Try "Running" warm pool once Litestream supports Live replica.
+    // WarmPool configuration. Uncomment here if needed.
+    // const asgCfn = asg.node.defaultChild as awsasg.CfnAutoScalingGroup
+    //
+    // // SEE: https://github.com/aws-samples/amazon-ec2-auto-scaling-group-examples/blob/main/features/lifecycle-hooks/userdata-managed-linux/template.yaml
+    // // SEE: https://aws.amazon.com/jp/blogs/compute/scaling-your-applications-faster-with-ec2-auto-scaling-warm-pools/
+    // new awsasg.CfnWarmPool(this, 'PWSIAExampleASGWarmPool', {
+    //   autoScalingGroupName: asgCfn.ref,
+    //   minSize: 1,
+    //
+    //   // SEE: [Warm pools for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html#warm-pool-configuration-ex2)
+    //   // Use "Running" warm pool for minimize service down-time. but you need to pay for that instance.
+    //   // poolState: 'Running',
+    //
+    //   // SEE: [Warm pools for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html#warm-pool-configuration-ex1)
+    //   // Use "Stopped" warm pool for reduce cost with "more down-time" compared to above.
+    //   poolState: 'Stopped',
+    // })
+
+    // Try sending `cfn-signal` after setup.
     // SEE: https://github.com/aws/aws-cdk/blob/master/packages/@aws-cdk/aws-ec2/lib/user-data.ts#L173
     setupCommands.addSignalOnExitCommand(asg)
 
     asg.applyCloudFormationInit(cfnInitConfig, {
+      // `cfn-init` script call are added automatically by AWS CDK.
       // Which configSets to run.
       configSets: ['init-all'],
       // Uncomment here for debugging.
@@ -223,6 +253,7 @@ export class VpcStack extends cdk.Stack {
     // Add ALB resources.
     const alb = new elbv2.ApplicationLoadBalancer(this, 'PWSIAExampleALB', {
       vpc,
+      loadBalancerName: 'pwsia-example-alb',
       internetFacing: true,
     })
 
@@ -246,8 +277,9 @@ export class VpcStack extends cdk.Stack {
       path: '/hb',
       port: '3000',
       healthyThresholdCount: 2,
+      unhealthyThresholdCount: 2,
       interval: cdk.Duration.seconds(5),
-      timeout: cdk.Duration.seconds(3),
+      timeout: cdk.Duration.seconds(2),
     })
 
     // Log public URL of ALB.
@@ -256,8 +288,6 @@ export class VpcStack extends cdk.Stack {
     })
 
     // Log public URL of ALB.
-    // awscdk.NewCfnOutput(Stack, jsii.String("LoadBalancerDNS"), &awscdk.CfnOutputProps{Value: props.AppAlbEc2.LoadBalancer().LoadBalancerDnsName()})
-
     listener.connections.allowDefaultPortFromAnyIpv4('Open to the world')
   }
 }
