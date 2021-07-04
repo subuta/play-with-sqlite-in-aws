@@ -3,6 +3,9 @@ import * as ec2 from '@aws-cdk/aws-ec2'
 import * as iam from '@aws-cdk/aws-iam'
 import * as awsasg from '@aws-cdk/aws-autoscaling'
 import * as s3 from '@aws-cdk/aws-s3'
+import * as s3deploy from '@aws-cdk/aws-s3-deployment'
+import * as elbv2 from '@aws-cdk/aws-elasticloadbalancingv2'
+
 import * as path from 'path'
 import { source } from 'common-tags'
 
@@ -10,23 +13,11 @@ type VpcStackProps = cdk.StackProps | {}
 
 const ROOT_DIR = path.resolve(__dirname, '../../')
 
-const getLaunchConfigId = (asg: awsasg.AutoScalingGroup): string => {
-  const node = asg.node.findAll().find((item) => item.node.id === 'LaunchConfig') as awsasg.CfnLaunchConfiguration
-  return node.logicalId
-}
-
-const getExecuteCfnInitOfLaunchConfigCommand = (asg: awsasg.AutoScalingGroup): string => {
-  const stack = cdk.Stack.of(asg)
-  // Get and use `LaunchConfig's logicalId` for fetching "AWS::CloudFormation::Init" metadata.
-  const launchConfigId = getLaunchConfigId(asg)
-  return `/opt/aws/bin/cfn-init -v --stack ${stack.stackName} --resource ${launchConfigId} --region ${stack.region}`
-}
-
 export class VpcStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: VpcStackProps) {
     super(scope, id, props)
 
-    // The code that defines your stack goes here
+    // Add VPC resources.
     const vpc = new ec2.Vpc(this, 'PWSIAExampleVpc', {
       natGateways: 1,
       maxAzs: 2,
@@ -51,6 +42,8 @@ export class VpcStack extends cdk.Stack {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       cors: [
         {
+          // Create common bucket for our service.
+          // !CAUTION! Set appropriate CORS origin/headers in production.
           allowedOrigins: ['*'],
           allowedHeaders: ['*'],
           allowedMethods: [
@@ -65,25 +58,34 @@ export class VpcStack extends cdk.Stack {
       ],
     })
 
+    // Put latest `server` binary into S3.
+    new s3deploy.BucketDeployment(this, 'PWSIAExampleBucketDeployment', {
+      sources: [s3deploy.Source.asset(path.resolve(ROOT_DIR, './data'), { exclude: ['**', '!new_server'] })],
+      destinationBucket: bucket,
+      destinationKeyPrefix: 'bin',
+      retainOnDelete: false,
+    })
+
     // SEE: https://github.com/awslabs/aws-cloudformation-templates/blob/master/aws/services/AutoScaling/AutoScalingRollingUpdates.yaml
     const setupCommands = ec2.UserData.forLinux({
       shebang: '#!/bin/bash -xe',
     })
-    // Do install necessary files.
+
+    // Do install necessary packages.
     setupCommands.addCommands('sudo yum install -y aws-cfn-bootstrap', 'sudo yum group install -y "Development Tools"')
 
     const multipartUserData = new ec2.MultipartUserData()
     // Set as default user data.
     multipartUserData.addUserDataPart(setupCommands)
 
-    const initFileOptionsForExecutable = { mode: '000655' }
+    const initFileOptionsForExecutable = { mode: '000755' }
 
     // SEE: https://gist.github.com/brettswift/6e48a70d808a28614438520682459f0c
     // SEE: https://github.com/aws/aws-cdk/blob/master/packages/@aws-cdk/aws-ec2/lib/user-data.ts#L173
     // SEE: https://github.com/awslabs/aws-cloudformation-templates/blob/master/aws/services/AutoScaling/AutoScalingRollingUpdates.yaml
     const cfnInitConfig = ec2.CloudFormationInit.fromConfigSets({
       configSets: {
-        default: ['yum-pre-install', 'put-runit-files', 'enable-runit-daemon'],
+        'init-all': ['yum-pre-install', 'put-runit-files', 'enable-runit-daemon'],
       },
       configs: {
         // Install these packages by yum.
@@ -101,14 +103,14 @@ export class VpcStack extends cdk.Stack {
                 #!/bin/bash
 
                 mkdir -p /opt/work/package
-                chmod 1755 /opt/work/package
+                sudo chmod 1755 /opt/work/package
                 cd /opt/work/package
                 wget http://smarden.org/runit/runit-2.1.2.tar.gz
                 gunzip runit-2.1.2.tar.gz
                 tar -xpf runit-2.1.2.tar
                 cd ./admin/runit-2.1.2
                 ./package/install
-                mkdir -p /service
+                sudo mkdir -p /service
             `,
             initFileOptionsForExecutable
           ),
@@ -142,6 +144,20 @@ export class VpcStack extends cdk.Stack {
             initFileOptionsForExecutable
           ),
 
+          // Put restart utility script.
+          ec2.InitFile.fromFileInline(
+            '/opt/work/restart.sh',
+            path.resolve(ROOT_DIR, './bin/restart.sh'),
+            initFileOptionsForExecutable
+          ),
+
+          // Put log utility script.
+          ec2.InitFile.fromFileInline(
+            '/opt/work/logs.sh',
+            path.resolve(ROOT_DIR, './bin/logs.sh'),
+            initFileOptionsForExecutable
+          ),
+
           // Pass runit's service file to systemd(AmazonLinux2's default service manager)
           ec2.InitFile.fromFileInline(
             '/etc/systemd/system/runit.service',
@@ -156,9 +172,13 @@ export class VpcStack extends cdk.Stack {
           ec2.InitCommand.shellCommand('mkdir -p /opt/work/db', { key: '02_create_db_directory' }),
           ec2.InitCommand.shellCommand('/opt/work/install-runit', { key: '03_run_install_runit' }),
           ec2.InitCommand.shellCommand('systemctl enable runit', { key: '04_enable_runit_at_systemd' }),
+          ec2.InitCommand.shellCommand('/opt/work/restart.sh', { key: '05_start_server' }),
         ]),
       },
     })
+
+    // How many EC2 Instance should be ready.
+    const desiredCapacity = 1
 
     const asg = new awsasg.AutoScalingGroup(this, 'PWSIAExampleASG', {
       vpc,
@@ -167,20 +187,25 @@ export class VpcStack extends cdk.Stack {
         generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
       }),
       autoScalingGroupName: 'pwsia-example-asg',
-      desiredCapacity: 1,
+      desiredCapacity,
+      minCapacity: desiredCapacity,
       groupMetrics: [awsasg.GroupMetrics.all()],
       userData: multipartUserData,
-      signals: awsasg.Signals.waitForMinCapacity(),
+      signals: awsasg.Signals.waitForMinCapacity({
+        timeout: cdk.Duration.minutes(10),
+      }),
     })
-
-    // Try executing cfn-init config.
-    setupCommands.addCommands(getExecuteCfnInitOfLaunchConfigCommand(asg))
 
     // Try sending cfn-signal after setup.
     // SEE: https://github.com/aws/aws-cdk/blob/master/packages/@aws-cdk/aws-ec2/lib/user-data.ts#L173
     setupCommands.addSignalOnExitCommand(asg)
 
-    asg.applyCloudFormationInit(cfnInitConfig)
+    asg.applyCloudFormationInit(cfnInitConfig, {
+      // Which configSets to run.
+      configSets: ['init-all'],
+      // Uncomment here for debugging.
+      // ignoreFailures: true
+    })
 
     // Add SSM related role to Instance.
     asg.role.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'))
@@ -195,25 +220,44 @@ export class VpcStack extends cdk.Stack {
       })
     )
 
-    // const alb = new elbv2.ApplicationLoadBalancer(this, 'PWSIAExampleALB', {
-    //   vpc,
-    //   internetFacing: true,
-    // })
-    //
-    // const listener = alb.addListener('Listener', {
-    //   port: 80,
-    //
-    //   // 'open: true' is the default, you can leave it out if you want. Set it
-    //   // to 'false' and use `listener.connections` if you want to be selective
-    //   // about who can access the load balancer.
-    //   open: true,
-    // })
-    //
-    // listener.addTargets('PWSIAExampleALBTarget', {
-    //   port: 3000,
-    //   targets: [asg],
-    // })
+    // Add ALB resources.
+    const alb = new elbv2.ApplicationLoadBalancer(this, 'PWSIAExampleALB', {
+      vpc,
+      internetFacing: true,
+    })
 
-    // listener.connections.allowDefaultPortFromAnyIpv4('Open to the world');
+    const listener = alb.addListener('Listener', {
+      port: 80,
+
+      // 'open: true' is the default, you can leave it out if you want. Set it
+      // to 'false' and use `listener.connections` if you want to be selective
+      // about who can access the load balancer.
+      open: true,
+    })
+
+    const tg = listener.addTargets('PWSIAExampleALBTarget', {
+      port: 3000,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targets: [asg],
+    })
+
+    // Set HealthCheck rule.
+    tg.configureHealthCheck({
+      path: '/hb',
+      port: '3000',
+      healthyThresholdCount: 2,
+      interval: cdk.Duration.seconds(5),
+      timeout: cdk.Duration.seconds(3),
+    })
+
+    // Log public URL of ALB.
+    new cdk.CfnOutput(this, 'PWSIAExampleALBURL', {
+      value: alb.loadBalancerDnsName,
+    })
+
+    // Log public URL of ALB.
+    // awscdk.NewCfnOutput(Stack, jsii.String("LoadBalancerDNS"), &awscdk.CfnOutputProps{Value: props.AppAlbEc2.LoadBalancer().LoadBalancerDnsName()})
+
+    listener.connections.allowDefaultPortFromAnyIpv4('Open to the world')
   }
 }

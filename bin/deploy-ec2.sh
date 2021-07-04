@@ -51,7 +51,7 @@ aws s3 --profile ${AWS_PROFILE} cp ./data/new_server s3://pwsia-example-bucket/b
 instanceIds=$(aws ssm --profile ${AWS_PROFILE} describe-instance-information --query "InstanceInformationList[*]" | jq -c '[.[].InstanceId]')
 printf "instanceIds = ${instanceIds}\n"
 
-commandId=$(aws ssm --profile ${AWS_PROFILE} send-command --instance-ids "${instanceIds}" --document-name "AWS-RunShellScript" --comment "Run command at EC2 Instances of ASG" --parameters commands="aws s3 cp s3://pwsia-example-bucket/bin/new_server /opt/work/server && chmod +x /opt/work/server && systemctl start runit" | jq -c '.Command.CommandId' | jq -r @sh | tr -d \')
+commandId=$(aws ssm --profile ${AWS_PROFILE} send-command --instance-ids "${instanceIds}" --document-name "AWS-RunShellScript" --comment "Run command at EC2 Instances of ASG" --parameters commands="/opt/work/restart.sh" | jq -c '.Command.CommandId' | jq -r @sh | tr -d \')
 printf "commandId = ${commandId}\n\n"
 
 for row in $(echo "${instanceIds}" | jq -r '.[]'); do

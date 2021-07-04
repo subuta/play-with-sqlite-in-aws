@@ -42,6 +42,12 @@ func GetRouter(db *sqlx.DB) *chi.Mux {
 
 	// Main route.
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		if d := r.URL.Query().Get("delay"); d != "" {
+			if delay, err := time.ParseDuration(d); err == nil {
+				time.Sleep(delay)
+			}
+		}
+
 		// Start a transaction.
 		tx := db.MustBegin()
 		defer tx.Rollback()

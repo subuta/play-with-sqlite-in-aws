@@ -175,5 +175,5 @@ func main() {
 	// has returned.
 	seamless.Wait()
 
-	log.Print("[main] Done OnShutdown, Finishing server process.")
+	log.Print("[main] Done OnShutdown, Finishing server process")
 }
