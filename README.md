@@ -1,5 +1,16 @@
 # play-with-sqlite-in-aws
-Try deploy SQLite based WebApp to AWS env
+
+CDK deployment example of SQLite based WebApp to AWS Environment.
+
+## What is this?
+
+This repository contains "Golang" Web App with CDK deployment to AWS.
+Built-on top of following libraries.
+
+- For Backup/Restore of SQLite database with S3 env.
+  - [benbjohnson/litestream: Streaming replication for SQLite.](https://github.com/benbjohnson/litestream)
+- For "Seamelss" deployment of Web application server.
+  - [rs/seamless: Seamless restart / zero-downtime deploy for Go servers](https://github.com/rs/seamless)
 
 ## Prerequisites
 
