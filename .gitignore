@@ -137,4 +137,4 @@ cdk.out/
 *.tabl.json
 
 # Ignore output.
-./infrastructure/cdk-outputs.json
+infrastructure/cdk-outputs.json
