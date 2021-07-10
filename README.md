@@ -4,7 +4,7 @@ Try deploy SQLite based WebApp to AWS env
 ## Prerequisites
 
 - For building linux binary on macOS.
-  - brew install FiloSottile/musl-cross/musl-cross
+  - `brew install FiloSottile/musl-cross/musl-cross`
 - macOS (Not tested with other OS)
 - AWS CLI
   - `~/.aws/config` and `~/.aws/credentials` should be configured properly.
@@ -12,7 +12,7 @@ Try deploy SQLite based WebApp to AWS env
 
 These tools needs to be installed when you run `make update` on your local machine
 
-- jq
+- `jq`
 
 ## How to develop (with Docker)
 

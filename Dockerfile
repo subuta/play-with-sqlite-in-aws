@@ -11,27 +11,20 @@ RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /opt/work/dist/server .
 # Copy utils.
 RUN cp -r /opt/work/fixtures /opt/work/dist/fixtures && \
     cp /opt/work/bin/restart.sh /opt/work/dist && \
+    cp /opt/work/bin/install-runit.sh /opt/work/dist && \
     mkdir /opt/work/dist/db
 
 # For emulating EC2 instance.
 FROM amazonlinux:2
 
 # Fix Cerificate error for S3.
-RUN yum update -y && yum group install -y "Development Tools" && yum install -y tar wget procps glibc-static ca-certificates
-
-# Install daemontools
-RUN mkdir -p /package && \
-    chmod 1755 /package && \
-    cd /package && \
-    wget http://smarden.org/runit/runit-2.1.2.tar.gz && \
-    gunzip runit-2.1.2.tar.gz && \
-    tar -xpf runit-2.1.2.tar && \
-    cd admin/runit-2.1.2 && \
-    ./package/install && \
-    mkdir -p /service
+RUN yum update -y && yum group install -y "Development Tools" && yum install -y tar wget procps glibc-static ca-certificates sudo
 
 # Copy our static executable.
 COPY --from=build /opt/work/dist /opt/work
+
+# Install runit
+RUN /opt/work/install-runit.sh
 
 WORKDIR /opt/work
 
