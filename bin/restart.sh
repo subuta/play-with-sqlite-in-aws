@@ -1,7 +1,30 @@
 #!/usr/bin/env bash
 
-# Fetch new version.
-sudo aws s3 cp s3://pwsia-example-bucket/bin/new_server /opt/work/server
+SHOULD_DELETE_DB=false
+SQLITE_DB_DIR=/opt/work/db
+
+# Loop through arguments, two at a time for key and value
+while [[ $# -gt 0 ]]
+do
+    key="$1"
+
+    case $key in
+        -d|--delete-db)
+            SHOULD_DELETE_DB=true
+            shift # past argument
+            ;;
+    esac
+    shift # past argument or value
+done
+
+# Clean "SQLITE_DB_DIR" for force Litestream to restore DB from S3 bucket.
+if [ $SHOULD_DELETE_DB == true ]; then
+  sudo rm -rf $SQLITE_DB_DIR
+  mkdir -p $SQLITE_DB_DIR
+  echo "Cleaned ${SQLITE_DB_DIR} dir."
+fi
+
+sudo aws s3 cp --no-progress s3://pwsia-example-bucket/bin/new_server /opt/work/server
 sudo chmod +x /opt/work/server
 
 # Start runit service only-if stopped.

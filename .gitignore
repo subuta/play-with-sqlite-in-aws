@@ -136,5 +136,5 @@ cdk.context.json
 cdk.out/
 *.tabl.json
 
-# Ignore Makefile might contain AWS profile name.
-Makefile
+# Ignore output.
+./infrastructure/cdk-outputs.json

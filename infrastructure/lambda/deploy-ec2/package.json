@@ -1,0 +1,18 @@
+{
+  "name": "deploy-ec2",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "install-docker": "docker run --rm -v \"${PWD}:/var/task\" lambci/lambda:build-nodejs12.x bash -c \"npm install --arch=x64 --platform=linux\"",
+    "start": "cat ./event.json | docker run --rm -v \"$PWD\":/var/task -v \"$HOME\"/.aws:/home/sbx_user1051/.aws:delegated,ro -e DOCKER_LAMBDA_USE_STDIN=1 -e CI=true -e AWS_REGION=$AWS_REGION -e AWS_PROFILE=$AWS_PROFILE -e AWS_SDK_LOAD_CONFIG=1 -i lambci/lambda:nodejs12.x index.handler"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bluebird": "^3.7.2",
+    "lodash": "^4.17.21",
+    "waait": "^1.0.5"
+  }
+}

@@ -8,11 +8,9 @@ COPY . .
 # Build executable.
 RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /opt/work/dist/server .
 
-#
+# Copy utils.
 RUN cp -r /opt/work/fixtures /opt/work/dist/fixtures && \
-    cp /opt/work/bin/wait-for-it.sh /opt/work/dist && \
     cp /opt/work/bin/restart.sh /opt/work/dist && \
-    cp /opt/work/bin/logs.sh /opt/work/dist && \
     mkdir /opt/work/dist/db
 
 # For emulating EC2 instance.

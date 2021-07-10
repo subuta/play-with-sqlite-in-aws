@@ -71,7 +71,7 @@ func GetRouter(db *sqlx.DB) *chi.Mux {
 		d2 := time.Since(start)
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("Hello, World 👋!, serverName = %s, pv = %d, d1(time taken for INSERT) = %v, d2(time taken for SELECT) = %v", serverName, count, d1, d2)))
+		w.Write([]byte(fmt.Sprintf("Hello World 👋!, serverName = %s, pv = %d, d1(time taken for INSERT) = %v, d2(time taken for SELECT) = %v", serverName, count, d1, d2)))
 	})
 
 	return r

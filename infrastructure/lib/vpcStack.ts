@@ -1,7 +1,9 @@
 import * as cdk from '@aws-cdk/core'
 import * as ec2 from '@aws-cdk/aws-ec2'
 import * as iam from '@aws-cdk/aws-iam'
+import * as lambda from '@aws-cdk/aws-lambda'
 import * as awsasg from '@aws-cdk/aws-autoscaling'
+import * as hooks from '@aws-cdk/aws-autoscaling-hooktargets'
 import * as s3 from '@aws-cdk/aws-s3'
 import * as s3deploy from '@aws-cdk/aws-s3-deployment'
 import * as elbv2 from '@aws-cdk/aws-elasticloadbalancingv2'
@@ -9,10 +11,12 @@ import * as elbv2 from '@aws-cdk/aws-elasticloadbalancingv2'
 import * as path from 'path'
 import { source } from 'common-tags'
 import { HealthCheck } from '@aws-cdk/aws-autoscaling/lib/auto-scaling-group'
+import * as logs from '@aws-cdk/aws-logs'
 
 type VpcStackProps = cdk.StackProps | {}
 
 const ROOT_DIR = path.resolve(__dirname, '../../')
+const LAMBDA_DIR = path.resolve(ROOT_DIR, './infrastructure/lambda')
 
 export class VpcStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: VpcStackProps) {
@@ -92,7 +96,7 @@ export class VpcStack extends cdk.Stack {
     // SEE: https://github.com/awslabs/aws-cloudformation-templates/blob/master/aws/services/AutoScaling/AutoScalingRollingUpdates.yaml
     const cfnInitConfig = ec2.CloudFormationInit.fromConfigSets({
       configSets: {
-        'init-all': ['yum-pre-install', 'put-runit-files', 'enable-runit-daemon'],
+        'init-all': ['yum-pre-install', 'put-assets', 'enable-runit-daemon'],
       },
       configs: {
         // Install these packages by yum.
@@ -103,25 +107,7 @@ export class VpcStack extends cdk.Stack {
           ec2.InitPackage.yum('ca-certificates'),
         ]),
         // Try install runit script.
-        'put-runit-files': new ec2.InitConfig([
-          ec2.InitFile.fromString(
-            '/opt/work/install-runit',
-            source`
-                #!/bin/bash
-
-                mkdir -p /opt/work/package
-                sudo chmod 1755 /opt/work/package
-                cd /opt/work/package
-                wget http://smarden.org/runit/runit-2.1.2.tar.gz
-                gunzip runit-2.1.2.tar.gz
-                tar -xpf runit-2.1.2.tar
-                cd ./admin/runit-2.1.2
-                ./package/install
-                sudo mkdir -p /service
-            `,
-            initFileOptionsForExecutable
-          ),
-
+        'put-assets': new ec2.InitConfig([
           // Environment variables for server.
           ec2.InitFile.fromString(
             '/opt/work/.env',
@@ -129,6 +115,13 @@ export class VpcStack extends cdk.Stack {
               DATABASE_URL=file:./db/db.sqlite?cache=shared&mode=rwc&_journal_mode=WAL&vfs=unix
               INITIAL_DB_SCHEMA_PATH=./fixtures/initial_schema.sql
             `
+          ),
+
+          // Script for installing runit.
+          ec2.InitFile.fromFileInline(
+            '/opt/work/install-runit',
+            path.resolve(ROOT_DIR, './bin/install-runit.sh'),
+            initFileOptionsForExecutable
           ),
 
           // Put initial schema file.
@@ -155,13 +148,6 @@ export class VpcStack extends cdk.Stack {
           ec2.InitFile.fromFileInline(
             '/opt/work/restart.sh',
             path.resolve(ROOT_DIR, './bin/restart.sh'),
-            initFileOptionsForExecutable
-          ),
-
-          // Put log utility script.
-          ec2.InitFile.fromFileInline(
-            '/opt/work/logs.sh',
-            path.resolve(ROOT_DIR, './bin/logs.sh'),
             initFileOptionsForExecutable
           ),
 
@@ -193,37 +179,46 @@ export class VpcStack extends cdk.Stack {
       machineImage: new ec2.AmazonLinuxImage({
         generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
       }),
+      blockDevices: [
+        {
+          // Set as root volume.
+          deviceName: '/dev/xvda',
+          // Set root volume size.
+          volume: awsasg.BlockDeviceVolume.ebs(20, {
+            // Change volumeType if needed(eg: Needs more throughput)
+            // volumeType: awsasg.EbsDeviceVolumeType.GP2,
+          }),
+        },
+      ],
       desiredCapacity,
       minCapacity: desiredCapacity,
-      groupMetrics: [awsasg.GroupMetrics.all()],
       userData: multipartUserData,
-      signals: awsasg.Signals.waitForMinCapacity({
+      signals: awsasg.Signals.waitForCount(desiredCapacity, {
         timeout: cdk.Duration.minutes(10),
       }),
-      healthCheck: HealthCheck.elb({ grace: cdk.Duration.seconds(0) }),
+      // SEE: [Health checks for Auto Scaling instances - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/healthcheck.html)
+      // ここをEC2でgrace period = 0とした時に、最短
+      healthCheck: HealthCheck.elb({ grace: cdk.Duration.seconds(120) }),
       // Minimize cool-down latency for better HA behavior.
       // SEE: [Scaling cooldowns for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/Cooldown.html)
+      // Wait for 3 minutes.
       cooldown: cdk.Duration.seconds(60),
     })
 
-    // TODO: Try "Running" warm pool once Litestream supports Live replica.
-    // WarmPool configuration. Uncomment here if needed.
-    // const asgCfn = asg.node.defaultChild as awsasg.CfnAutoScalingGroup
-    //
-    // // SEE: https://github.com/aws-samples/amazon-ec2-auto-scaling-group-examples/blob/main/features/lifecycle-hooks/userdata-managed-linux/template.yaml
-    // // SEE: https://aws.amazon.com/jp/blogs/compute/scaling-your-applications-faster-with-ec2-auto-scaling-warm-pools/
-    // new awsasg.CfnWarmPool(this, 'PWSIAExampleASGWarmPool', {
-    //   autoScalingGroupName: asgCfn.ref,
-    //   minSize: 1,
-    //
-    //   // SEE: [Warm pools for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html#warm-pool-configuration-ex2)
-    //   // Use "Running" warm pool for minimize service down-time. but you need to pay for that instance.
-    //   // poolState: 'Running',
-    //
-    //   // SEE: [Warm pools for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html#warm-pool-configuration-ex1)
-    //   // Use "Stopped" warm pool for reduce cost with "more down-time" compared to above.
-    //   poolState: 'Stopped',
-    // })
+    // WarmPool configuration for reduce down time. (Around 6 minutes taken without WarmPool)
+    const asgCfn = asg.node.defaultChild as awsasg.CfnAutoScalingGroup
+
+    // SEE: https://github.com/aws-samples/amazon-ec2-auto-scaling-group-examples/blob/main/features/lifecycle-hooks/userdata-managed-linux/template.yaml
+    // SEE: https://aws.amazon.com/jp/blogs/compute/scaling-your-applications-faster-with-ec2-auto-scaling-warm-pools/
+    new awsasg.CfnWarmPool(this, 'PWSIAExampleASGWarmPool', {
+      autoScalingGroupName: asgCfn.ref,
+      minSize: 1,
+
+      // SEE: [Warm pools for Amazon EC2 Auto Scaling - Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html#warm-pool-configuration-ex2)
+      // Use "Running" warm pool for minimize service down-time. but you need to pay for that instance.
+      poolState: 'Stopped',
+      // poolState: 'Running',
+    })
 
     // Try sending `cfn-signal` after setup.
     // SEE: https://github.com/aws/aws-cdk/blob/master/packages/@aws-cdk/aws-ec2/lib/user-data.ts#L173
@@ -249,6 +244,42 @@ export class VpcStack extends cdk.Stack {
         resources: [bucket.bucketArn],
       })
     )
+
+    const deployEc2Fn = new lambda.Function(this, 'PWSIAExampleDeployEc2', {
+      functionName: 'pwsia-deploy-ec2',
+      code: lambda.Code.fromAsset(path.join(LAMBDA_DIR, './deploy-ec2')),
+      runtime: lambda.Runtime.NODEJS_12_X,
+      handler: 'index.handler',
+      memorySize: 512,
+      timeout: cdk.Duration.minutes(5),
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+    })
+
+    // Allow SSM related action from Lambda.
+    deployEc2Fn.role?.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        resources: ['*'],
+        actions: [
+          'ssm:*',
+          'autoscaling:CompleteLifecycleAction',
+          'autoscaling:setInstanceHealth',
+          'autoscaling:DescribeAutoScalingGroups',
+          'cloudwatch:ListMetrics',
+          'cloudwatch:GetMetricStatistics',
+        ],
+      })
+    )
+
+    if (deployEc2Fn.role) {
+      bucket.grantReadWrite(deployEc2Fn.role)
+    }
+
+    // Trigger Lambda function on WarmPool event.
+    asg.addLifecycleHook('PWSIAExampleAsgHook', {
+      lifecycleTransition: awsasg.LifecycleTransition.INSTANCE_LAUNCHING,
+      notificationTarget: new hooks.FunctionHook(deployEc2Fn),
+    })
 
     // Add ALB resources.
     const alb = new elbv2.ApplicationLoadBalancer(this, 'PWSIAExampleALB', {

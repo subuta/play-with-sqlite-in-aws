@@ -1,0 +1,22 @@
+{
+  "Records": [
+    {
+      "EventSource": "aws:sns",
+      "EventVersion": "1.0",
+      "EventSubscriptionArn": "xxx",
+      "Sns": {
+        "Type": "Notification",
+        "MessageId": "xxx",
+        "TopicArn": "xxx",
+        "Subject": "Auto Scaling:  Lifecycle action 'LAUNCHING' for instance i-xxx in progress.",
+        "Message": "{\"Origin\":\"EC2\",\"LifecycleHookName\":\"xxx\",\"Destination\":\"AutoScalingGroup\",\"AccountId\":\"xxx\",\"RequestId\":\"xxx\",\"LifecycleTransition\":\"autoscaling:EC2_INSTANCE_LAUNCHING\",\"AutoScalingGroupName\":\"xxx\",\"Service\":\"AWS Auto Scaling\",\"Time\":\"2021-07-06T13:39:39.363Z\",\"EC2InstanceId\":\"\",\"LifecycleActionToken\":\"\"}",
+        "Timestamp": "2021-07-06T13:39:39.387Z",
+        "SignatureVersion": "1",
+        "Signature": "xxx",
+        "SigningCertUrl": "xxx",
+        "UnsubscribeUrl": "xxx",
+        "MessageAttributes": {}
+      }
+    }
+  ]
+}

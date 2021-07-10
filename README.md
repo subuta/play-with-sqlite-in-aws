@@ -6,10 +6,12 @@ Try deploy SQLite based WebApp to AWS env
 - For building linux binary on macOS.
   - brew install FiloSottile/musl-cross/musl-cross
 - macOS (Not tested with other OS)
+- AWS CLI
+  - `~/.aws/config` and `~/.aws/credentials` should be configured properly.
+- Docker (for Development)
 
-These tools needs to be installed when you run `make deploy-s` on your local machine
+These tools needs to be installed when you run `make update` on your local machine
 
-- aws-cli (Tested on aws-cli/2.2.15, At least cli version accepts `aws ssm wait` command)
 - jq
 
 ## How to develop (with Docker)
@@ -19,10 +21,8 @@ These tools needs to be installed when you run `make deploy-s` on your local mac
 cp .env.example .env
 
 # COPY Makefile
-# Replace `--profile` argument to your AWS Account's profile name.
-# Then you can use these handy make commands instead of manually constructing it.
-cp Makefile.example Makefile
-vi Makefile
+# Replace "AWS_PROFILE" of env.
+vi .env
 
 # Start s3 service
 docker-compose up -d s3
@@ -36,13 +36,37 @@ docker-compose up
 # Open app
 open http://localhost:3000
 
-# Try restore replica as local file by Litestream
-docker-compose run ls restore -if-replica-exists -o /opt/work/db/restored-db.sqlite /opt/work/db/db.sqlite
-
-# Try query to server.
+# Try query to local server.
 while true; do curl http://localhost:3000/hb || break; done
 while true; do curl 'http://localhost:3000/hb?delay=3s' || break; done
 
 # Try update server
-make update-d
+make update_dev
+```
+
+## How to deploy into AWS
+
+```
+# Run bootstrap (If prompted)
+make bootstrap
+
+# Get CDK diff (dry-run)
+make diff
+
+# Trigger deployment of AWS resources(includes ASG/ALB...).
+make deploy
+
+# Open production URL.
+cat ./infrastructure/cdk-outputs.json | jq '.PWSIAVpcStack.PWSIAExampleALBURL' | read ALB_URL && bash -c "open \"http://${ALB_URL}\""
+
+# Try query to production server. 
+cat ./infrastructure/cdk-outputs.json | jq '.PWSIAVpcStack.PWSIAExampleALBURL' | read ALB_URL && bash -c "while true; do curl \"http://${ALB_URL}/hb\" || break; done"
+cat ./infrastructure/cdk-outputs.json | jq '.PWSIAVpcStack.PWSIAExampleALBURL' | read ALB_URL && bash -c "while true; do curl \"http://${ALB_URL}/hb?delay=3s\" || break; done"
+
+# Try update server
+make update
+
+# Remove all created resources
+# CAUTION: S3 Buckets needs manual deletion after running "make destroy"
+make destroy
 ```
